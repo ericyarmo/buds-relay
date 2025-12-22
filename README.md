@@ -8,16 +8,23 @@ Built with Cloudflare Workers + D1 following the OWASP API Security Top 10 2023 
 
 ## Status
 
-**Hardening Sprint: Phase 1 Complete** ✅
+**Hardening Sprint: Phase 2 Complete** ✅
 
+**Phase 1: Authentication & Validation** ✅
 - ✅ Project structure created
 - ✅ Dependencies installed (Hono, firebase-auth-cloudflare-workers, Zod)
 - ✅ Firebase Auth middleware implemented
 - ✅ Input validation with Zod schemas
 - ✅ Error handling with structured logging
-- ✅ **29/29 validation tests passing** (golden + threat vectors)
 
-**Next:** Phase 2-5 of hardening sprint (see `/Buds/PHASE_6_HARDENING_SPRINT.md`)
+**Phase 2: Rate Limiting** ✅
+- ✅ In-memory rate limiter implemented
+- ✅ Per-endpoint rate limiting configured
+- ✅ DID enumeration prevention
+- ✅ Rate limit headers (X-RateLimit-*)
+- ✅ **39/39 tests passing** (29 validation + 10 rate limiting)
+
+**Next:** Phase 3-5 of hardening sprint (see `/Buds/PHASE_6_HARDENING_SPRINT.md`)
 
 ---
 
@@ -39,7 +46,8 @@ buds-relay/
 ├── src/
 │   ├── index.ts              # Main router
 │   ├── middleware/
-│   │   └── auth.ts           # Firebase Auth middleware
+│   │   ├── auth.ts           # Firebase Auth middleware
+│   │   └── ratelimit.ts      # Rate limiting middleware ✅
 │   ├── handlers/             # API handlers (TODO)
 │   ├── utils/
 │   │   ├── validation.ts     # Zod schemas
@@ -47,7 +55,8 @@ buds-relay/
 │   │   └── crypto.ts         # Phone hashing
 │   └── cron/                 # Cleanup jobs (TODO)
 ├── test/
-│   └── validation.test.ts    # ✅ 29/29 tests passing
+│   ├── validation.test.ts    # ✅ 29/29 tests passing
+│   └── ratelimit.test.ts     # ✅ 10/10 tests passing
 ├── schema.sql                # D1 database schema
 ├── wrangler.toml             # Cloudflare Workers config
 ├── tsconfig.json
@@ -94,9 +103,10 @@ npm test
 Expected output:
 ```
 ✓ test/validation.test.ts (29 tests) 7ms
+✓ test/ratelimit.test.ts (10 tests) 1132ms
 
-Test Files  1 passed (1)
-     Tests  29 passed (29)
+Test Files  2 passed (2)
+     Tests  39 passed (39)
 ```
 
 ### 6. Start Development Server
@@ -186,6 +196,21 @@ All API inputs validated with strict schemas:
 - Public keys cached in KV for performance
 - Invalid tokens → 401 Unauthorized
 
+### Rate Limiting
+
+- Per-endpoint limits to prevent abuse
+- DID enumeration prevention (20 lookups/min)
+- Device registration spam protection (5/5min)
+- Rate limit headers: X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset
+- Retry-After header when rate limited
+- Tracked by Firebase UID (authenticated) or IP (anonymous)
+
+**Configured limits:**
+- `/api/lookup/did`: 20 requests/minute
+- `/api/devices/register`: 5 requests per 5 minutes
+- `/api/messages/send`: 100 requests/minute
+- `/api/messages/inbox`: 200 requests/minute
+
 ### Error Handling
 
 - User-friendly error messages (no internal leaks)
@@ -197,7 +222,9 @@ All API inputs validated with strict schemas:
 
 ## Test Coverage
 
-**29 tests (100% passing)**
+**39 tests (100% passing)**
+
+### Validation Tests (29 tests)
 
 **Golden Vectors** (prove correctness):
 - Valid DIDs accepted
@@ -213,6 +240,20 @@ All API inputs validated with strict schemas:
 - Circle limit enforced (max 12 DIDs)
 - Empty arrays rejected
 - Non-hex phone hashes rejected
+
+### Rate Limiting Tests (10 tests)
+
+**Golden Vectors** (prove correctness):
+- Requests under limit allowed
+- Rate limit headers set correctly
+- Different IPs have separate limits
+- Authenticated users tracked by UID
+
+**Threat Vectors** (prove security):
+- Requests over limit blocked (429)
+- Retry-After header returned
+- DID enumeration attacks prevented
+- Device registration spam blocked
 
 ---
 
@@ -237,11 +278,11 @@ FIREBASE_PROJECT_ID = "your-project-id"
 
 Following `/Buds/PHASE_6_HARDENING_SPRINT.md`:
 
-**Phase 2: Rate Limiting (45 min)**
-- [ ] Implement Cloudflare Workers rate limiting
-- [ ] Add per-endpoint limits
-- [ ] Create golden + threat tests
-- [ ] Prevent DID enumeration attacks
+**Phase 2: Rate Limiting** ✅
+- [x] Implement Cloudflare Workers rate limiting
+- [x] Add per-endpoint limits
+- [x] Create golden + threat tests
+- [x] Prevent DID enumeration attacks
 
 **Phase 3: Complete Handlers (60 min)**
 - [ ] Device registration endpoint
@@ -259,7 +300,7 @@ Following `/Buds/PHASE_6_HARDENING_SPRINT.md`:
 - [ ] Integration tests
 - [ ] Deployment automation
 
-**Total remaining: ~2.5 hours**
+**Total remaining: ~1.75 hours**
 
 ---
 
@@ -301,4 +342,4 @@ Eric Yarmolinsky
 
 ---
 
-**Status:** Phase 1 hardening complete. Ready for Phase 2-5 implementation.
+**Status:** Phase 2 hardening complete. 39/39 tests passing. Ready for Phase 3-5 implementation.

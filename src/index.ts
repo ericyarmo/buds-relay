@@ -8,6 +8,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { requireAuth } from './middleware/auth';
+import { autoRateLimit } from './middleware/ratelimit';
 import { handleError } from './utils/errors';
 
 // Type definitions for bindings
@@ -54,7 +55,8 @@ app.get('/health', async (c) => {
   }
 });
 
-// Apply auth to all API routes
+// Apply rate limiting and auth to all API routes
+app.use('/api/*', autoRateLimit());
 app.use('/api/*', requireAuth);
 
 // API routes (TODO: implement handlers)
