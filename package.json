@@ -1,0 +1,36 @@
+{
+  "name": "buds-relay",
+  "version": "1.0.0",
+  "description": "Buds E2EE Relay Server - Cloudflare Workers",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "deploy:staging": "wrangler deploy --env dev",
+    "deploy:prod": "wrangler deploy --env production",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "typecheck": "tsc --noEmit",
+    "db:create": "wrangler d1 create buds-relay-db",
+    "db:migrate": "wrangler d1 execute buds-relay-db --local --file=schema.sql",
+    "db:migrate:prod": "wrangler d1 execute buds-relay-db --remote --file=schema.sql",
+    "kv:create": "wrangler kv:namespace create KV_CACHE"
+  },
+  "keywords": ["cloudflare", "workers", "e2ee", "relay"],
+  "author": "Eric Yarmolinsky",
+  "license": "MIT",
+  "dependencies": {
+    "firebase-auth-cloudflare-workers": "^2.0.6",
+    "hono": "^4.11.1",
+    "zod": "^4.2.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251221.0",
+    "@types/node": "^25.0.3",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.16",
+    "wrangler": "^4.56.0"
+  }
+}

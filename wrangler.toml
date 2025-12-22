@@ -1,0 +1,37 @@
+name = "buds-relay"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+
+# Development environment
+[env.dev]
+name = "buds-relay-dev"
+
+# Production environment (use later)
+[env.production]
+name = "buds-relay"
+
+# KV namespace for Firebase public key caching
+[[kv_namespaces]]
+binding = "KV_CACHE"
+id = "" # Will be created with: wrangler kv:namespace create KV_CACHE
+
+# D1 Database
+[[d1_databases]]
+binding = "DB"
+database_name = "buds-relay-db"
+database_id = "" # Will be created with: wrangler d1 create buds-relay-db
+
+# Rate limiting (native Cloudflare Workers)
+# [[unsafe.bindings]]
+# name = "RATE_LIMITER"
+# type = "ratelimit"
+# namespace_id = "buds_relay_ratelimit"
+
+# Environment variables
+[vars]
+ENVIRONMENT = "development"
+FIREBASE_PROJECT_ID = "buds-prod" # Replace with your Firebase project ID
+
+# Scheduled cleanup job (runs daily at 2 AM UTC)
+# [triggers]
+# crons = ["0 2 * * *"]
