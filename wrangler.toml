@@ -33,5 +33,5 @@ ENVIRONMENT = "development"
 FIREBASE_PROJECT_ID = "buds-prod" # Replace with your Firebase project ID
 
 # Scheduled cleanup job (runs daily at 2 AM UTC)
-# [triggers]
-# crons = ["0 2 * * *"]
+[triggers]
+crons = ["0 2 * * *"]

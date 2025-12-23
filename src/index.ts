@@ -95,4 +95,11 @@ app.notFound((c) => {
   return c.json({ error: 'Not found' }, 404);
 });
 
-export default app;
+// Export with scheduled cleanup job
+export default {
+  fetch: app.fetch,
+  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    const { runCleanup } = await import('./cron/cleanup');
+    ctx.waitUntil(runCleanup(env));
+  },
+};
