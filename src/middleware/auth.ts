@@ -6,7 +6,7 @@
  * with KV-backed public key caching.
  */
 
-import { Auth, WorkersKVStoreSingle } from 'firebase-auth-cloudflare-workers';
+import { Auth } from 'firebase-auth-cloudflare-workers';
 import type { Context, Next } from 'hono';
 
 export interface AuthEnv {
@@ -20,15 +20,28 @@ export interface AuthUser {
   email?: string;
 }
 
+// Simple KV adapter for Firebase Auth
+class KVAdapter {
+  constructor(private kv: KVNamespace) {}
+
+  async get(key: string): Promise<string | null> {
+    return await this.kv.get(key);
+  }
+
+  async put(key: string, value: string): Promise<void> {
+    await this.kv.put(key, value);
+  }
+}
+
 // Singleton Auth instance (cached across requests)
 let authInstance: Auth | null = null;
 
 function getAuth(env: AuthEnv): Auth {
   if (!authInstance) {
-    const kvStore = new WorkersKVStoreSingle(env.KV_CACHE);
+    const kvAdapter = new KVAdapter(env.KV_CACHE);
     authInstance = Auth.getOrInitialize(
       env.FIREBASE_PROJECT_ID,
-      kvStore
+      kvAdapter as any
     );
   }
   return authInstance;
@@ -41,7 +54,7 @@ function getAuth(env: AuthEnv): Auth {
  * Returns 401 on auth failure.
  */
 export async function requireAuth(
-  c: Context<{ Bindings: AuthEnv }>,
+  c: Context<{ Bindings: AuthEnv; Variables: { user: AuthUser } }>,
   next: Next
 ) {
   const authHeader = c.req.header('Authorization');

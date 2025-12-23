@@ -11,6 +11,12 @@ import { requireAuth } from './middleware/auth';
 import { autoRateLimit } from './middleware/ratelimit';
 import { handleError } from './utils/errors';
 
+// Import handlers
+import { registerDevice, listDevices, deviceHeartbeat } from './handlers/devices';
+import { lookupDid, batchLookupDid } from './handlers/lookup';
+import { sendMessage, getInbox, markDelivered, deleteMessage } from './handlers/messages';
+import type { AuthUser } from './middleware/auth';
+
 // Type definitions for bindings
 export interface Env {
   // D1 Database
@@ -24,12 +30,17 @@ export interface Env {
   ENVIRONMENT: string;
 }
 
-const app = new Hono<{ Bindings: Env }>();
+// Context variables
+interface Variables {
+  user: AuthUser;
+}
+
+const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
 // CORS configuration
 app.use('/*', cors({
   origin: '*', // TODO: Restrict in production
-  allowMethods: ['GET', 'POST', 'OPTIONS'],
+  allowMethods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
   allowHeaders: ['Content-Type', 'Authorization'],
   credentials: true,
 }));
@@ -59,14 +70,20 @@ app.get('/health', async (c) => {
 app.use('/api/*', autoRateLimit());
 app.use('/api/*', requireAuth);
 
-// API routes (TODO: implement handlers)
-app.get('/api/test', (c) => {
-  const user = c.get('user');
-  return c.json({
-    message: 'Authenticated!',
-    user,
-  });
-});
+// Device endpoints
+app.post('/api/devices/register', registerDevice);
+app.post('/api/devices/list', listDevices);
+app.post('/api/devices/heartbeat', deviceHeartbeat);
+
+// Lookup endpoints
+app.post('/api/lookup/did', lookupDid);
+app.post('/api/lookup/batch', batchLookupDid);
+
+// Message endpoints
+app.post('/api/messages/send', sendMessage);
+app.get('/api/messages/inbox', getInbox);
+app.post('/api/messages/mark-delivered', markDelivered);
+app.delete('/api/messages/:messageId', deleteMessage);
 
 // Global error handler
 app.onError((error, c) => {

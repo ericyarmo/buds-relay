@@ -89,7 +89,7 @@ export function validateBody<T>(
   } catch (error) {
     if (error instanceof z.ZodError) {
       // Transform Zod errors into user-friendly messages
-      const details = error.errors.map(e =>
+      const details = error.issues.map((e: z.ZodIssue) =>
         `${e.path.join('.')}: ${e.message}`
       );
       throw new Error(`Validation failed: ${details.join(', ')}`);

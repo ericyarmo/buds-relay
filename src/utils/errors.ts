@@ -80,7 +80,7 @@ export function handleError(error: unknown, c: Context): Response {
       error: error.message,
       code: error.code,
       requestId,
-    }, error.statusCode);
+    }, error.statusCode as any);
   }
 
   // Zod validation errors
@@ -90,7 +90,7 @@ export function handleError(error: unknown, c: Context): Response {
       requestId,
       code: 'VALIDATION_ERROR',
       status: 400,
-      errors: error.errors,
+      issues: error.issues,
       path: c.req.url,
       timestamp: Date.now(),
     }));
@@ -98,7 +98,7 @@ export function handleError(error: unknown, c: Context): Response {
     return c.json({
       error: 'Validation failed',
       code: 'VALIDATION_ERROR',
-      details: error.errors.map(e => `${e.path.join('.')}: ${e.message}`),
+      details: error.issues.map((e: z.ZodIssue) => `${e.path.join('.')}: ${e.message}`),
       requestId,
     }, 400);
   }
