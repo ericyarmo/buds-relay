@@ -13,13 +13,13 @@ name = "buds-relay"
 # KV namespace for Firebase public key caching
 [[kv_namespaces]]
 binding = "KV_CACHE"
-id = "" # Will be created with: wrangler kv:namespace create KV_CACHE
+id = "5019bafb2abf4e62a3c641df0db8d187"
 
 # D1 Database
 [[d1_databases]]
 binding = "DB"
 database_name = "buds-relay-db"
-database_id = "" # Will be created with: wrangler d1 create buds-relay-db
+database_id = "1ad09189-17cd-4efe-8bc1-7cd8b195769b"
 
 # Rate limiting (native Cloudflare Workers)
 # [[unsafe.bindings]]
