@@ -20,7 +20,7 @@ database_id = "1ad09189-17cd-4efe-8bc1-7cd8b195769b"
 # Environment variables
 [env.dev.vars]
 ENVIRONMENT = "development"
-FIREBASE_PROJECT_ID = "buds-prod"
+FIREBASE_PROJECT_ID = "buds-a32e0"
 
 # Production environment
 [env.production]
@@ -40,7 +40,7 @@ database_id = "1ad09189-17cd-4efe-8bc1-7cd8b195769b"
 # Environment variables (production)
 [env.production.vars]
 ENVIRONMENT = "production"
-FIREBASE_PROJECT_ID = "buds-prod"
+FIREBASE_PROJECT_ID = "buds-a32e0"
 
 # Scheduled cleanup job (runs daily at 2 AM UTC)
 [triggers]

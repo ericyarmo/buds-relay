@@ -55,6 +55,15 @@ export const schemas = {
     z.string().regex(/^did:buds:[A-Za-z0-9]{1,44}$/)
   ).min(1, 'At least one DID required')
     .max(12, 'Maximum 12 DIDs allowed (Circle limit)'),
+
+  // Wrapped keys: Record<device_id, base64_wrapped_key>
+  wrappedKeys: z.record(
+    z.string().uuid('Invalid device ID in wrapped_keys'),
+    z.string().regex(/^[A-Za-z0-9+/]+=*$/, 'Invalid base64 wrapped key')
+  ).refine(
+    (keys) => Object.keys(keys).length > 0,
+    'At least one wrapped key required'
+  ),
 };
 
 /**

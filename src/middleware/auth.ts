@@ -20,16 +20,17 @@ export interface AuthUser {
   email?: string;
 }
 
-// Simple KV adapter for Firebase Auth
-class KVAdapter {
-  constructor(private kv: KVNamespace) {}
+// Simple in-memory cache for Firebase public keys
+// (KV has 512-char key limit which causes issues with long URLs)
+const publicKeyCache = new Map<string, string>();
 
+class SimpleCache {
   async get(key: string): Promise<string | null> {
-    return await this.kv.get(key);
+    return publicKeyCache.get(key) || null;
   }
 
   async put(key: string, value: string): Promise<void> {
-    await this.kv.put(key, value);
+    publicKeyCache.set(key, value);
   }
 }
 
@@ -38,10 +39,10 @@ let authInstance: Auth | null = null;
 
 function getAuth(env: AuthEnv): Auth {
   if (!authInstance) {
-    const kvAdapter = new KVAdapter(env.KV_CACHE);
+    const cache = new SimpleCache();
     authInstance = Auth.getOrInitialize(
       env.FIREBASE_PROJECT_ID,
-      kvAdapter as any
+      cache as any
     );
   }
   return authInstance;

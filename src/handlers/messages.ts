@@ -27,7 +27,7 @@ export async function sendMessage(c: Context<AppContext>) {
   const senderDeviceId = validate(schemas.deviceId, body.sender_device_id);
   const recipientDids = validate(schemas.dids, body.recipient_dids);
   const encryptedPayload = validate(schemas.base64, body.encrypted_payload);
-  const wrappedKeys = validate(schemas.base64, body.wrapped_keys);
+  const wrappedKeys = validate(schemas.wrappedKeys, body.wrapped_keys);
 
   // Verify sender device is registered to authenticated user
   const device = await db
@@ -72,7 +72,7 @@ export async function sendMessage(c: Context<AppContext>) {
       senderDeviceId,
       JSON.stringify(recipientDids),
       encryptedPayload,
-      wrappedKeys,
+      JSON.stringify(wrappedKeys),
       now,
       expiresAt
     )
@@ -148,7 +148,7 @@ export async function getInbox(c: Context<AppContext>) {
     sender_device_id: row.sender_device_id,
     recipient_dids: JSON.parse(row.recipient_dids as string),
     encrypted_payload: row.encrypted_payload,
-    wrapped_keys: row.wrapped_keys,
+    wrapped_keys: JSON.parse(row.wrapped_keys as string),
     created_at: row.created_at,
     expires_at: row.expires_at,
     delivered_at: row.delivered_at,
