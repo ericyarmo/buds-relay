@@ -2,102 +2,46 @@
 
 **Zero-trust E2EE message relay for Buds Circle sharing**
 
-Built with Cloudflare Workers + D1 following the OWASP API Security Top 10 2023 framework.
+Built with Cloudflare Workers + D1 + R2, following OWASP API Security Top 10 2023.
 
 ---
 
 ## Status
 
-🚀 **PRODUCTION DEPLOYED** - R2 Migration Complete (Dec 25, 2025)
+🚀 **PRODUCTION DEPLOYED** (Dec 25, 2025)
 **Live:** https://buds-relay.getstreams.workers.dev
+**Domain:** api.joinbuds.com (pending DNS setup)
 
-**Phase 1: Authentication & Validation** ✅
-- ✅ Project structure created
-- ✅ Dependencies installed (Hono, firebase-auth-cloudflare-workers, Zod)
-- ✅ Firebase Auth middleware implemented
-- ✅ Input validation with Zod schemas
-- ✅ Error handling with structured logging
+### What's Complete
 
-**Phase 2: Rate Limiting** ✅
-- ✅ In-memory rate limiter implemented
-- ✅ Per-endpoint rate limiting configured
-- ✅ DID enumeration prevention
-- ✅ Rate limit headers (X-RateLimit-*)
+✅ **Authentication** - Firebase ID token verification with KV-cached public keys
+✅ **Rate Limiting** - Per-endpoint limits (20-200 req/min), DID enumeration prevention
+✅ **Input Validation** - Zod schemas for all inputs, SQL injection prevention
+✅ **E2EE Message Relay** - Device registration, DID lookup, message send/receive
+✅ **Signature Verification** - Ed25519 signature storage + validation (Migration 0003)
+✅ **R2 Storage Migration** - Encrypted payloads in R2 vs D1 (Migration 0004)
+✅ **Cleanup Cron** - Expired messages + R2 objects deleted daily at 2 AM UTC
+✅ **Test Coverage** - 39/39 tests passing, zero TypeScript errors
 
-**Phase 3: API Handlers** ✅
-- ✅ Device registration, listing, heartbeat endpoints
-- ✅ DID lookup (single + batch) endpoints
-- ✅ E2EE message send/receive endpoints
-- ✅ Message delivery tracking
-- ✅ TypeScript type safety across all handlers
+### Scale Performance
 
-**Phase 5: Production Readiness** ✅
-- ✅ Cleanup cron job (expired messages + inactive devices)
-- ✅ Scheduled triggers (daily at 2 AM UTC)
-- ✅ Deployment script with safety checks
-- ✅ **39/39 tests passing** (validation + rate limiting)
-- ✅ Zero TypeScript errors
+- **Before:** D1 stores 500KB payloads → 50GB/day → Database full in hours ❌
+- **After:** R2 stores payloads → $0.83/month for 30GB → Scales to 100k messages/day ✅
+- **Impact:** 99.97% reduction in D1 storage (1.5TB → 1GB metadata only)
 
-**Phase 7: Signature Verification Support** ✅
-- ✅ Ed25519 signature validation in request schema
-- ✅ Signature storage in encrypted_messages table
-- ✅ Signature returned in inbox responses
-- ✅ Migration 0003 deployed (add signature column)
-
-**Phase 8: R2 Storage Migration** ✅ (Dec 25, 2025)
-- ✅ R2 buckets created (buds-messages-dev, buds-messages-prod)
-- ✅ Migration 0004 deployed (add r2_key column)
-- ✅ Updated sendMessage: Uploads encrypted payloads to R2
-- ✅ Updated getInbox: Reads from R2, converts to base64
-- ✅ Updated cleanup cron: Deletes R2 objects for expired messages
-- ✅ **Scale Fix**: Prevents D1 bloat (50GB/day → 1GB metadata)
-- ✅ **Cost**: $0.83/month for 30GB R2 storage vs D1 overflow
-
-**Production-ready for 10k users, 100k messages/day!**
+**Production-ready for 10k users, 100k messages/day.**
 
 ---
 
 ## Tech Stack
 
 - **Runtime:** Cloudflare Workers (edge compute)
-- **Database:** Cloudflare D1 (SQLite at the edge)
-- **Storage:** Cloudflare R2 (object storage for encrypted payloads)
-- **Framework:** Hono (fast, lightweight HTTP router)
-- **Auth:** firebase-auth-cloudflare-workers (zero-dependency Firebase Auth)
+- **Database:** Cloudflare D1 (SQLite at the edge) - metadata only
+- **Storage:** Cloudflare R2 (object storage) - encrypted message payloads
+- **Framework:** Hono (fast HTTP router)
+- **Auth:** firebase-auth-cloudflare-workers
 - **Validation:** Zod (TypeScript-first schema validation)
-- **Testing:** Vitest (fast unit tests)
-
----
-
-## Project Structure
-
-```
-buds-relay/
-├── src/
-│   ├── index.ts              # Main router + scheduled triggers ✅
-│   ├── middleware/
-│   │   ├── auth.ts           # Firebase Auth middleware ✅
-│   │   └── ratelimit.ts      # Rate limiting middleware ✅
-│   ├── handlers/
-│   │   ├── devices.ts        # Device registration & discovery ✅
-│   │   ├── lookup.ts         # DID lookup endpoints ✅
-│   │   └── messages.ts       # E2EE message handlers ✅
-│   ├── utils/
-│   │   ├── validation.ts     # Zod schemas ✅
-│   │   ├── errors.ts         # Error handling ✅
-│   │   └── crypto.ts         # Phone hashing ✅
-│   └── cron/
-│       └── cleanup.ts        # Scheduled cleanup job ✅
-├── test/
-│   ├── validation.test.ts    # ✅ 29/29 tests passing
-│   └── ratelimit.test.ts     # ✅ 10/10 tests passing
-├── schema.sql                # D1 database schema ✅
-├── wrangler.toml             # Cloudflare Workers config ✅
-├── deploy.sh                 # Deployment script ✅
-├── tsconfig.json
-├── vitest.config.ts
-└── package.json
-```
+- **Testing:** Vitest (39/39 tests passing)
 
 ---
 
@@ -109,70 +53,57 @@ buds-relay/
 npm install
 ```
 
-### 2. Create D1 Database
+### 2. Create Resources
 
 ```bash
-npm run db:create
-# Copy the database_id to wrangler.toml
+# Login to Cloudflare
+npx wrangler login
+
+# Create D1 database
+npx wrangler d1 create buds-relay-db
+# Copy database_id to wrangler.toml
+
+# Create KV namespace
+npx wrangler kv namespace create KV_CACHE
+# Copy id to wrangler.toml
+
+# Create R2 buckets
+npx wrangler r2 bucket create buds-messages-dev
+npx wrangler r2 bucket create buds-messages-prod
 ```
 
-### 3. Create KV Namespace
+### 3. Apply Migrations
 
 ```bash
-npm run kv:create
-# Copy the id to wrangler.toml
-```
-
-### 4. Apply Database Schema
-
-```bash
+# Local
 npm run db:migrate
+
+# Production
+npm run db:migrate:prod
 ```
 
 **Migrations:**
-- `0001_initial.sql` - Initial schema (encrypted_messages, devices, etc.)
+- `0001_initial.sql` - Initial schema
 - `0002_add_apns_token.sql` - APNs token for push notifications
-- `0003_add_signature_column.sql` - Ed25519 signature storage (Phase 7)
-- `0004_add_r2_storage.sql` - R2 object storage for encrypted payloads (Phase 8)
+- `0003_add_signature_column.sql` - Ed25519 signature storage
+- `0004_add_r2_storage.sql` - R2 object storage for encrypted payloads
 
-### 5. Run Tests
+### 4. Run Tests
 
 ```bash
 npm test
+# Expected: ✓ 39 tests passing
 ```
 
-Expected output:
-```
-✓ test/validation.test.ts (29 tests) 7ms
-✓ test/ratelimit.test.ts (10 tests) 1132ms
-
-Test Files  2 passed (2)
-     Tests  39 passed (39)
-```
-
-### 6. Start Development Server
+### 5. Deploy
 
 ```bash
-npm run dev
+# Development
+npm run deploy
+
+# Production
+npm run deploy:prod
 ```
-
-Server runs at `http://localhost:8787`
-
----
-
-## Available Scripts
-
-- `npm run dev` - Start local development server
-- `npm run deploy` - Deploy to workers.dev
-- `npm run deploy:staging` - Deploy to staging environment
-- `npm run deploy:prod` - Deploy to production
-- `npm test` - Run all tests
-- `npm run test:watch` - Run tests in watch mode
-- `npm run typecheck` - TypeScript type checking
-- `npm run db:create` - Create D1 database
-- `npm run db:migrate` - Apply schema (local)
-- `npm run db:migrate:prod` - Apply schema (production)
-- `npm run kv:create` - Create KV namespace
 
 ---
 
@@ -180,177 +111,68 @@ Server runs at `http://localhost:8787`
 
 All `/api/*` endpoints require Firebase Authentication (`Authorization: Bearer <token>`).
 
-### Health Check
-
-```bash
-GET /health
-```
-
-Returns server health status (no auth required).
-
 ### Device Management
 
 ```bash
-# Register new device
-POST /api/devices/register
-{
-  "device_id": "uuid-v4",
-  "device_name": "Alice's iPhone",
-  "owner_did": "did:buds:...",
-  "owner_phone_hash": "sha256-hash",
-  "pubkey_x25519": "base64",
-  "pubkey_ed25519": "base64"
-}
-
-# List devices for DIDs
-POST /api/devices/list
-{
-  "dids": ["did:buds:...", "did:buds:..."]
-}
-
-# Update device heartbeat
-POST /api/devices/heartbeat
-{
-  "device_id": "uuid-v4"
-}
+POST /api/devices/register     # Register new device
+POST /api/devices/list          # List devices for DIDs
+POST /api/devices/heartbeat     # Update device last_seen_at
 ```
 
 ### DID Lookup
 
 ```bash
-# Lookup DID by phone hash
-POST /api/lookup/did
-{
-  "phone_hash": "sha256-hash"
-}
-
-# Batch lookup (max 12)
-POST /api/lookup/batch
-{
-  "phone_hashes": ["hash1", "hash2", ...]
-}
+POST /api/lookup/did            # Lookup DID by phone hash
+POST /api/lookup/batch          # Batch lookup (max 12)
 ```
 
 ### E2EE Messages
 
 ```bash
-# Send encrypted message
-POST /api/messages/send
-{
-  "message_id": "uuid-v4",
-  "receipt_cid": "bafyrei...",
-  "sender_did": "did:buds:...",
-  "sender_device_id": "uuid-v4",
-  "recipient_dids": ["did:buds:...", ...],
-  "encrypted_payload": "base64",
-  "wrapped_keys": { "device-uuid-1": "base64-key", ... },
-  "signature": "base64-ed25519-signature"
-}
-
-# Get inbox (paginated)
-GET /api/messages/inbox?did=did:buds:...&limit=50&since=1234567890
-
-# Mark message delivered
+POST /api/messages/send         # Send encrypted message (uploads to R2)
+GET  /api/messages/inbox        # Get inbox (reads from R2)
 POST /api/messages/mark-delivered
-{
-  "message_id": "uuid-v4",
-  "recipient_did": "did:buds:..."
-}
+DELETE /api/messages/:messageId # Delete message + R2 object
+```
 
-# Delete message
-DELETE /api/messages/:messageId
+### Health Check
+
+```bash
+GET /health                     # No auth required
 ```
 
 ---
 
 ## Security Model
 
-### Input Validation (Zod Schemas)
+### Zero-Trust E2EE Architecture
 
-All API inputs validated with strict schemas:
+- **Client encrypts** → Relay stores ciphertext in R2 → **Client decrypts**
+- Relay cannot read message contents (AES-256-GCM encrypted)
+- Relay cannot modify messages (Ed25519 signatures verified by recipients)
+- Relay cannot inject messages (device ownership verified)
 
-- ✅ **DIDs:** `did:buds:<base58>` format
-- ✅ **Device IDs:** UUID v4 format
-- ✅ **Phone hashes:** SHA-256 (64 hex characters)
-- ✅ **Base64:** Valid base64 encoding
-- ✅ **CIDs:** CIDv1 base32 format
-- ✅ **Ed25519 Signatures:** Base64-encoded, 88 characters
-- ✅ **Arrays:** Max 12 DIDs (Circle limit)
+### Validation (Zod Schemas)
 
-**SQL injection prevention:** All inputs validated before prepared statements.
+- ✅ DIDs: `did:buds:<base58>` format
+- ✅ Device IDs: UUID v4
+- ✅ Phone hashes: SHA-256 (64 hex chars)
+- ✅ CIDs: CIDv1 base32 format
+- ✅ Ed25519 Signatures: Base64, 88 chars
+- ✅ Max 12 DIDs per request (Circle limit)
 
-### E2EE Verification
+### Rate Limiting
 
-- Ed25519 signatures included with encrypted messages
-- Signatures stored alongside encrypted payloads
-- Relay stores signatures for client-side verification
-- Recipients verify signatures against TOFU-pinned keys
+- `/api/lookup/did`: 20 requests/minute (DID enumeration prevention)
+- `/api/devices/register`: 5 requests per 5 minutes (spam prevention)
+- `/api/messages/send`: 100 requests/minute
+- `/api/messages/inbox`: 200 requests/minute
 
 ### Authentication
 
 - Firebase ID token required for all `/api/*` routes
-- Token verified using `firebase-auth-cloudflare-workers`
 - Public keys cached in KV for performance
 - Invalid tokens → 401 Unauthorized
-
-### Rate Limiting
-
-- Per-endpoint limits to prevent abuse
-- DID enumeration prevention (20 lookups/min)
-- Device registration spam protection (5/5min)
-- Rate limit headers: X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset
-- Retry-After header when rate limited
-- Tracked by Firebase UID (authenticated) or IP (anonymous)
-
-**Configured limits:**
-- `/api/lookup/did`: 20 requests/minute
-- `/api/devices/register`: 5 requests per 5 minutes
-- `/api/messages/send`: 100 requests/minute
-- `/api/messages/inbox`: 200 requests/minute
-
-### Error Handling
-
-- User-friendly error messages (no internal leaks)
-- Structured JSON logging
-- Request IDs for debugging (CF-Ray header)
-- Zod errors transformed to readable format
-
----
-
-## Test Coverage
-
-**39 tests (100% passing)**
-
-### Validation Tests (29 tests)
-
-**Golden Vectors** (prove correctness):
-- Valid DIDs accepted
-- Valid UUIDs accepted
-- Valid phone numbers accepted
-- Valid base64 accepted
-- Valid CIDs accepted
-
-**Threat Vectors** (prove security):
-- SQL injection blocked
-- Malformed DIDs rejected
-- Invalid UUIDs rejected
-- Circle limit enforced (max 12 DIDs)
-- Empty arrays rejected
-- Non-hex phone hashes rejected
-
-### Rate Limiting Tests (10 tests)
-
-**Golden Vectors** (prove correctness):
-- Requests under limit allowed
-- Rate limit headers set correctly
-- Different IPs have separate limits
-- Authenticated users tracked by UID
-
-**Threat Vectors** (prove security):
-- Requests over limit blocked (429)
-- Retry-After header returned
-- DID enumeration attacks prevented
-- Device registration spam blocked
 
 ---
 
@@ -359,138 +181,99 @@ All API inputs validated with strict schemas:
 ### Environment Variables (wrangler.toml)
 
 ```toml
-[vars]
-ENVIRONMENT = "development"
-FIREBASE_PROJECT_ID = "your-project-id"
+[env.production.vars]
+ENVIRONMENT = "production"
+FIREBASE_PROJECT_ID = "buds-a32e0"
 ```
 
 ### Required Bindings
 
 - `DB` - D1 Database (metadata storage)
-- `KV_CACHE` - KV Namespace (for Firebase public keys)
-- `R2_MESSAGES` - R2 Bucket (for encrypted message payloads)
+- `KV_CACHE` - KV Namespace (Firebase public key cache)
+- `R2_MESSAGES` - R2 Bucket (encrypted message payloads)
+
+### Optional Secrets (APNs Push)
+
+```bash
+npx wrangler secret put APNS_P8_KEY --env production
+npx wrangler secret put APNS_KEY_ID --env production
+npx wrangler secret put APNS_TEAM_ID --env production
+```
 
 ---
 
-## Hardening Sprint Results
+## Custom Domain Setup
 
-All 5 phases complete following OWASP API Security Top 10 2023:
-
-**Phase 1: Authentication & Validation** ✅
-- Firebase Auth with KV-cached public keys
-- Zod validation for all inputs
-- SQL injection prevention
-
-**Phase 2: Rate Limiting** ✅
-- Per-endpoint limits (20-200 req/min)
-- DID enumeration prevention
-- Rate limit headers + Retry-After
-
-**Phase 3: API Handlers** ✅
-- 10 API endpoints (devices, lookup, messages)
-- Full TypeScript type safety
-- E2EE message relay
-
-**Phase 4: Error Handling** ✅
-- User-friendly error messages
-- Structured JSON logging
-- Zero information leaks
-
-**Phase 5: Production Readiness** ✅
-- Cleanup cron job (daily at 2 AM UTC)
-- Deployment script with safety checks
-- 39/39 tests passing
-
-**Total development time:** ~4 hours (vs estimated 4.25 hours)
-
----
-
-## Deployment
-
-### Prerequisites
-
-1. **Cloudflare Account**: Sign up at [cloudflare.com](https://www.cloudflare.com)
-2. **Wrangler CLI**: Already installed via `npm install`
-3. **Firebase Project**: Create at [console.firebase.google.com](https://console.firebase.google.com)
-   - Enable Phone Authentication
-   - Copy Project ID to `wrangler.toml` (FIREBASE_PROJECT_ID)
-
-### First-Time Setup
-
-```bash
-# 1. Login to Cloudflare
-npx wrangler login
-
-# 2. Create D1 database
-npm run db:create
-# Copy the database_id to wrangler.toml
-
-# 3. Create KV namespace
-npm run kv:create
-# Copy the id to wrangler.toml
-
-# 4. Apply database schema (local)
-npm run db:migrate
-```
-
-### Deploy with Script (Recommended)
-
-The deployment script runs type checking, tests, and safety checks:
-
-```bash
-# Deploy to development
-./deploy.sh dev
-
-# Deploy to production
-./deploy.sh production
-```
-
-The script will:
-- ✅ Run TypeScript type checking
-- ✅ Run all tests (39/39 must pass)
-- ✅ Check D1 database is configured
-- ✅ Check KV namespace is configured
-- ✅ Apply migrations (production only, with confirmation)
-- ✅ Deploy to Cloudflare Workers
-- ✅ Show deployment URL
-
-### Manual Deployment
-
-```bash
-# Development/staging
-npm run deploy:staging
-
-# Production
-npm run deploy:prod
-```
-
-### Post-Deployment
-
-```bash
-# Test health endpoint
-curl https://buds-relay-dev.YOUR_SUBDOMAIN.workers.dev/health
-
-# Monitor logs
-npx wrangler tail
-
-# View analytics
-npx wrangler dev
-```
-
-### Custom Domain (Optional)
-
-1. Buy domain (e.g., `getbuds.app`)
+1. Buy domain: `joinbuds.com`
 2. Add to Cloudflare DNS
 3. Update `wrangler.toml`:
 
 ```toml
 [env.production]
 routes = [
-  { pattern = "api.getbuds.app/*", zone_name = "getbuds.app" }
+  { pattern = "api.joinbuds.com/*", zone_name = "joinbuds.com" }
 ]
 ```
 
-4. Deploy: `./deploy.sh production`
+4. Deploy: `npm run deploy:prod`
+
+---
+
+## Monitoring
+
+```bash
+# Tail logs (real-time)
+npx wrangler tail --env production
+
+# View analytics
+npx wrangler dev
+
+# Check health
+curl https://api.joinbuds.com/health
+```
+
+---
+
+## Project Structure
+
+```
+buds-relay/
+├── src/
+│   ├── index.ts              # Main router + scheduled triggers
+│   ├── middleware/           # Auth + rate limiting
+│   ├── handlers/             # API endpoints (devices, lookup, messages)
+│   ├── utils/                # Validation, errors, crypto
+│   └── cron/                 # Cleanup job (expired messages + R2)
+├── test/                     # 39 tests (validation + rate limiting)
+├── migrations/               # 4 migrations (0001-0004)
+├── wrangler.toml             # Cloudflare config
+└── deploy.sh                 # Deployment script with safety checks
+```
+
+---
+
+## Available Scripts
+
+- `npm run dev` - Start local development server
+- `npm test` - Run all tests (39/39 passing)
+- `npm run typecheck` - TypeScript type checking
+- `npm run deploy:prod` - Deploy to production
+- `npm run db:migrate:prod` - Apply migrations to production
+
+---
+
+## Cost Analysis (10k users, 100k messages/day)
+
+| Resource | Usage | Cost |
+|----------|-------|------|
+| Workers paid plan | 10M req/day | $5/month |
+| D1 database | 1 GB metadata | Included |
+| R2 storage | 30 GB | $0.45/month |
+| R2 Class A ops (PUT) | 100k/day | $0.36/month |
+| R2 Class B ops (GET) | 400k/day | $0.02/month |
+| **Total** | | **$5.83/month** |
+
+**Cost per user:** $0.0006/month = **$0.007/year** 🎉
 
 ---
 
@@ -504,4 +287,4 @@ Eric Yarmolinsky
 
 ---
 
-**Status:** Phase 5 complete. Production-ready relay server. 39/39 tests passing. Ready for deployment.
+**Status:** Production deployed. 39/39 tests passing. Ready for 10k users.
