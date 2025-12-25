@@ -4,9 +4,9 @@
 
 -- Add r2_key column to store R2 object key instead of inline encrypted_payload
 -- Strategy: Gradual migration
---   - New messages: Store payload in R2, set r2_key
---   - Old messages: Keep encrypted_payload for backward compatibility
---   - Inbox API: Return presigned URL if r2_key exists, else encrypted_payload
+--   - New messages: Store payload in R2, set r2_key, encrypted_payload = '' (placeholder)
+--   - Old messages: Keep encrypted_payload for backward compatibility, r2_key = NULL
+--   - Inbox API: Check r2_key first, fallback to encrypted_payload
 ALTER TABLE encrypted_messages ADD COLUMN r2_key TEXT;
 
 -- Index for efficient R2 key lookups
@@ -14,5 +14,5 @@ CREATE INDEX IF NOT EXISTS idx_encrypted_messages_r2_key
 ON encrypted_messages(r2_key)
 WHERE r2_key IS NOT NULL;
 
--- Note: encrypted_payload column remains for backward compatibility
--- Future migration: After all messages migrated to R2, can drop encrypted_payload column
+-- Note: encrypted_payload column remains NOT NULL for backward compatibility
+-- New messages set it to empty string '', old messages keep the base64 payload

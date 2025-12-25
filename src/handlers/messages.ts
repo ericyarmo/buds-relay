@@ -64,7 +64,7 @@ export async function sendMessage(c: Context<AppContext>) {
   const r2 = c.env.R2_MESSAGES;
 
   // Decode base64 payload and upload to R2
-  const payloadBytes = Uint8Array.from(atob(encryptedPayload), (c) => c.charCodeAt(0));
+  const payloadBytes = Uint8Array.from(atob(encryptedPayload), (char) => char.charCodeAt(0));
   await r2.put(r2Key, payloadBytes, {
     httpMetadata: {
       contentType: 'application/octet-stream',
@@ -77,16 +77,16 @@ export async function sendMessage(c: Context<AppContext>) {
     },
   });
 
-  // Insert encrypted message metadata (no encrypted_payload, just r2_key)
+  // Insert encrypted message metadata (encrypted_payload = '' for R2 messages)
   const expiresAt = now + 30 * 24 * 60 * 60 * 1000; // 30 days
 
   await db
     .prepare(`
       INSERT INTO encrypted_messages (
         message_id, receipt_cid, sender_did, sender_device_id,
-        recipient_dids, wrapped_keys, signature, r2_key,
+        recipient_dids, encrypted_payload, wrapped_keys, signature, r2_key,
         created_at, expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     .bind(
       messageId,
@@ -94,6 +94,7 @@ export async function sendMessage(c: Context<AppContext>) {
       senderDid,
       senderDeviceId,
       JSON.stringify(recipientDids),
+      '', // Empty string placeholder (payload is in R2)
       JSON.stringify(wrappedKeys),
       signature,
       r2Key,
@@ -280,6 +281,12 @@ export async function deleteMessage(c: Context<AppContext>) {
     throw Errors.NotFound('Message');
   }
 
+  // Delete delivery records FIRST (before parent encrypted_messages record)
+  await db
+    .prepare('DELETE FROM message_delivery WHERE message_id = ?')
+    .bind(messageId)
+    .run();
+
   // Only sender can delete (or message is expired)
   const now = Date.now();
   const result = await db
@@ -297,12 +304,6 @@ export async function deleteMessage(c: Context<AppContext>) {
     await r2.delete(message.r2_key as string);
     console.log(`Deleted R2 object: ${message.r2_key}`);
   }
-
-  // Delete delivery records (cascade)
-  await db
-    .prepare('DELETE FROM message_delivery WHERE message_id = ?')
-    .bind(messageId)
-    .run();
 
   return c.json({
     success: true,
