@@ -15,8 +15,32 @@ export async function cleanupExpiredMessages(env: Env): Promise<{
 }> {
   const now = Date.now();
   const db = env.DB;
+  const r2 = env.R2_MESSAGES;
 
-  // Delete expired messages
+  // First, get all expired messages with R2 keys
+  const expiredMessages = await db
+    .prepare('SELECT message_id, r2_key FROM encrypted_messages WHERE expires_at < ?')
+    .bind(now)
+    .all();
+
+  // Delete R2 objects for expired messages
+  let deletedR2Objects = 0;
+  if (expiredMessages.results && expiredMessages.results.length > 0) {
+    const r2DeletePromises = expiredMessages.results
+      .filter((msg) => msg.r2_key) // Only messages with R2 keys
+      .map(async (msg) => {
+        try {
+          await r2.delete(msg.r2_key as string);
+          deletedR2Objects++;
+        } catch (error) {
+          console.error(`Failed to delete R2 object ${msg.r2_key}:`, error);
+        }
+      });
+
+    await Promise.allSettled(r2DeletePromises);
+  }
+
+  // Delete expired messages from D1
   const result = await db
     .prepare('DELETE FROM encrypted_messages WHERE expires_at < ?')
     .bind(now)
@@ -39,6 +63,7 @@ export async function cleanupExpiredMessages(env: Env): Promise<{
     level: 'info',
     event: 'cleanup_completed',
     deleted_messages: deletedMessages,
+    deleted_r2_objects: deletedR2Objects,
     timestamp: now,
   }));
 

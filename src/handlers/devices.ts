@@ -27,6 +27,7 @@ export async function registerDevice(c: Context<AppContext>) {
   const ownerPhoneHash = validate(schemas.phoneHash, body.owner_phone_hash);
   const pubkeyX25519 = validate(schemas.base64, body.pubkey_x25519);
   const pubkeyEd25519 = validate(schemas.base64, body.pubkey_ed25519);
+  const apnsToken = body.apns_token ? validate(schemas.apnsToken, body.apns_token) : null;
 
   // Verify the authenticated user's phone matches the hash provided
   if (user.phoneNumber) {
@@ -38,6 +39,8 @@ export async function registerDevice(c: Context<AppContext>) {
   }
 
   try {
+    const now = Date.now();
+
     // Check if device already exists
     const existing = await db
       .prepare('SELECT device_id FROM devices WHERE device_id = ?')
@@ -45,29 +48,41 @@ export async function registerDevice(c: Context<AppContext>) {
       .first();
 
     if (existing) {
-      throw new Error('Device already registered');
+      // Update existing device (re-registration with potentially new APNs token)
+      await db
+        .prepare(`
+          UPDATE devices
+          SET device_name = ?,
+              pubkey_x25519 = ?,
+              pubkey_ed25519 = ?,
+              apns_token = ?,
+              last_seen_at = ?
+          WHERE device_id = ?
+        `)
+        .bind(deviceName, pubkeyX25519, pubkeyEd25519, apnsToken, now, deviceId)
+        .run();
+    } else {
+      // Insert new device
+      await db
+        .prepare(`
+          INSERT INTO devices (
+            device_id, owner_did, owner_phone_hash, device_name,
+            pubkey_x25519, pubkey_ed25519, apns_token, status, registered_at, last_seen_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+        `)
+        .bind(
+          deviceId,
+          ownerDid,
+          ownerPhoneHash,
+          deviceName,
+          pubkeyX25519,
+          pubkeyEd25519,
+          apnsToken,
+          now,
+          now
+        )
+        .run();
     }
-
-    // Insert device
-    const now = Date.now();
-    await db
-      .prepare(`
-        INSERT INTO devices (
-          device_id, owner_did, owner_phone_hash, device_name,
-          pubkey_x25519, pubkey_ed25519, status, registered_at, last_seen_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
-      `)
-      .bind(
-        deviceId,
-        ownerDid,
-        ownerPhoneHash,
-        deviceName,
-        pubkeyX25519,
-        pubkeyEd25519,
-        now,
-        now
-      )
-      .run();
 
     // Update phone_to_did mapping
     await db
@@ -85,9 +100,6 @@ export async function registerDevice(c: Context<AppContext>) {
       registered_at: now,
     }, 201);
   } catch (error) {
-    if (error instanceof Error && error.message === 'Device already registered') {
-      throw Errors.ValidationFailed('Device ID already exists');
-    }
     throw error;
   }
 }

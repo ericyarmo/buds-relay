@@ -18,12 +18,18 @@
     "db:migrate:prod": "wrangler d1 execute buds-relay-db --remote --file=schema.sql",
     "kv:create": "wrangler kv:namespace create KV_CACHE"
   },
-  "keywords": ["cloudflare", "workers", "e2ee", "relay"],
+  "keywords": [
+    "cloudflare",
+    "workers",
+    "e2ee",
+    "relay"
+  ],
   "author": "Eric Yarmolinsky",
   "license": "MIT",
   "dependencies": {
     "firebase-auth-cloudflare-workers": "^2.0.6",
     "hono": "^4.11.1",
+    "jose": "^6.1.3",
     "zod": "^4.2.1"
   },
   "devDependencies": {

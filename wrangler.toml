@@ -17,6 +17,11 @@ binding = "DB"
 database_name = "buds-relay-db"
 database_id = "1ad09189-17cd-4efe-8bc1-7cd8b195769b"
 
+# R2 Object Storage for encrypted message payloads
+[[env.dev.r2_buckets]]
+binding = "R2_MESSAGES"
+bucket_name = "buds-messages-dev"
+
 # Environment variables
 [env.dev.vars]
 ENVIRONMENT = "development"
@@ -36,6 +41,11 @@ id = "5019bafb2abf4e62a3c641df0db8d187"
 binding = "DB"
 database_name = "buds-relay-db"
 database_id = "1ad09189-17cd-4efe-8bc1-7cd8b195769b"
+
+# R2 Object Storage for encrypted message payloads (production)
+[[env.production.r2_buckets]]
+binding = "R2_MESSAGES"
+bucket_name = "buds-messages-prod"
 
 # Environment variables (production)
 [env.production.vars]

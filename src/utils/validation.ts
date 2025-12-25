@@ -41,6 +41,12 @@ export const schemas = {
     .min(1, 'Device name cannot be empty')
     .max(100, 'Device name too long (max 100 characters)'),
 
+  // APNs token (64 hex characters)
+  apnsToken: z.string().regex(
+    /^[a-f0-9]{64}$/,
+    'Invalid APNs token (expected 64 hex characters)'
+  ),
+
   // Message ID (UUID v4)
   messageId: z.string().uuid('Invalid message ID (expected UUID v4)'),
 
@@ -63,6 +69,13 @@ export const schemas = {
   ).refine(
     (keys) => Object.keys(keys).length > 0,
     'At least one wrapped key required'
+  ),
+
+  // Ed25519 signature (base64 encoded, 64 bytes raw = 88 chars base64)
+  // 64 bytes * 4/3 = 85.33, rounds to 86 chars + 2 padding = 88 total
+  signature: z.string().regex(
+    /^[A-Za-z0-9+/]{86,88}={0,2}$/,
+    'Invalid Ed25519 signature (expected base64, 88 chars)'
   ),
 };
 

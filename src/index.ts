@@ -25,9 +25,17 @@ export interface Env {
   // KV Namespace (for Firebase public key caching)
   KV_CACHE: KVNamespace;
 
+  // R2 Object Storage (for encrypted message payloads)
+  R2_MESSAGES: R2Bucket;
+
   // Environment variables
   FIREBASE_PROJECT_ID: string;
   ENVIRONMENT: string;
+
+  // APNs credentials (secrets)
+  APNS_P8_KEY?: string; // .p8 key content
+  APNS_KEY_ID?: string; // Key ID from Apple Developer Portal
+  APNS_TEAM_ID?: string; // Team ID from Apple Developer Portal
 }
 
 // Context variables
