@@ -15,6 +15,7 @@ import { handleError } from './utils/errors';
 import { registerDevice, listDevices, deviceHeartbeat } from './handlers/devices';
 import { lookupDid, batchLookupDid } from './handlers/lookup';
 import { sendMessage, getInbox, markDelivered, deleteMessage } from './handlers/messages';
+import { getOrCreateAccountSalt } from './handlers/account';
 import type { AuthUser } from './middleware/auth';
 
 // Type definitions for bindings
@@ -77,6 +78,9 @@ app.get('/health', async (c) => {
 // Apply rate limiting and auth to all API routes
 app.use('/api/*', autoRateLimit());
 app.use('/api/*', requireAuth);
+
+// Account endpoints (Phase 10.3 Module 0.2)
+app.post('/api/account/salt', getOrCreateAccountSalt);
 
 // Device endpoints
 app.post('/api/devices/register', registerDevice);

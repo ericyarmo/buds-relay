@@ -22,3 +22,21 @@ export async function hashPhone(phoneNumber: string): Promise<string> {
 
 // Alias for compatibility
 export const hashPhoneNumber = hashPhone;
+
+/**
+ * Generate random 32-byte salt for account DID derivation
+ * Used in: DID = did:phone:SHA256(phone + salt)
+ *
+ * Returns base64-encoded 32-byte random value
+ */
+export function generateSalt(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+
+  // Convert to base64
+  const binString = Array.from(bytes, (byte) =>
+    String.fromCodePoint(byte),
+  ).join('');
+
+  return btoa(binString);
+}
