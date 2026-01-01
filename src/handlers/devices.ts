@@ -1,10 +1,12 @@
 /**
  * Device Registration & Discovery Handlers
+ * Updated in Phase 10.3 Module 0.3: Deterministic Phone Encryption
  */
 
 import type { Context } from 'hono';
 import { validate, schemas } from '../utils/validation';
 import { Errors } from '../utils/errors';
+import { encryptPhone } from '../utils/phone_encryption';
 import type { Env } from '../index';
 import type { AuthUser } from '../middleware/auth';
 
@@ -13,6 +15,9 @@ type AppContext = { Bindings: Env; Variables: { user: AuthUser } };
 /**
  * POST /api/devices/register
  * Register a new device for the authenticated user
+ *
+ * Phase 10.3 Module 0.3: Now accepts plaintext phone_number, encrypts server-side
+ * Security: Phone sent over HTTPS (TLS), encrypted at rest in DB
  */
 export async function registerDevice(c: Context<AppContext>) {
   const user = c.get('user') as AuthUser;
@@ -24,19 +29,25 @@ export async function registerDevice(c: Context<AppContext>) {
   const deviceId = validate(schemas.deviceId, body.device_id);
   const deviceName = validate(schemas.deviceName, body.device_name);
   const ownerDid = validate(schemas.did, body.owner_did);
-  const ownerPhoneHash = validate(schemas.phoneHash, body.owner_phone_hash);
+  const phoneNumber = body.phone_number; // Plaintext phone from client (over HTTPS)
   const pubkeyX25519 = validate(schemas.base64, body.pubkey_x25519);
   const pubkeyEd25519 = validate(schemas.base64, body.pubkey_ed25519);
   const apnsToken = body.apns_token ? validate(schemas.apnsToken, body.apns_token) : null;
 
-  // Verify the authenticated user's phone matches the hash provided
+  // Verify the authenticated user's phone matches the provided phone
   if (user.phoneNumber) {
-    const crypto = await import('../utils/crypto');
-    const expectedHash = await crypto.hashPhoneNumber(user.phoneNumber);
-    if (expectedHash !== ownerPhoneHash) {
-      throw Errors.Forbidden();
+    if (user.phoneNumber !== phoneNumber) {
+      throw Errors.Forbidden('Phone number mismatch');
     }
   }
+
+  // Encrypt phone number server-side (deterministic for lookups)
+  const encryptionKey = c.env.PHONE_ENCRYPTION_KEY;
+  if (!encryptionKey) {
+    throw Errors.ServerError('Phone encryption key not configured');
+  }
+
+  const ownerEncryptedPhone = await encryptPhone(phoneNumber, encryptionKey);
 
   try {
     const now = Date.now();
@@ -53,27 +64,28 @@ export async function registerDevice(c: Context<AppContext>) {
         .prepare(`
           UPDATE devices
           SET device_name = ?,
+              owner_encrypted_phone = ?,
               pubkey_x25519 = ?,
               pubkey_ed25519 = ?,
               apns_token = ?,
               last_seen_at = ?
           WHERE device_id = ?
         `)
-        .bind(deviceName, pubkeyX25519, pubkeyEd25519, apnsToken, now, deviceId)
+        .bind(deviceName, ownerEncryptedPhone, pubkeyX25519, pubkeyEd25519, apnsToken, now, deviceId)
         .run();
     } else {
-      // Insert new device
+      // Insert new device (Phase 10.3: encrypted phone instead of hash)
       await db
         .prepare(`
           INSERT INTO devices (
-            device_id, owner_did, owner_phone_hash, device_name,
+            device_id, owner_did, owner_encrypted_phone, device_name,
             pubkey_x25519, pubkey_ed25519, apns_token, status, registered_at, last_seen_at
           ) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
         `)
         .bind(
           deviceId,
           ownerDid,
-          ownerPhoneHash,
+          ownerEncryptedPhone,
           deviceName,
           pubkeyX25519,
           pubkeyEd25519,
@@ -84,14 +96,14 @@ export async function registerDevice(c: Context<AppContext>) {
         .run();
     }
 
-    // Update phone_to_did mapping
+    // Update phone_to_did mapping (Phase 10.3: encrypted phone instead of hash)
     await db
       .prepare(`
-        INSERT INTO phone_to_did (phone_hash, did, updated_at)
+        INSERT INTO phone_to_did (encrypted_phone, did, updated_at)
         VALUES (?, ?, ?)
-        ON CONFLICT(phone_hash) DO UPDATE SET did = ?, updated_at = ?
+        ON CONFLICT(encrypted_phone) DO UPDATE SET did = ?, updated_at = ?
       `)
-      .bind(ownerPhoneHash, ownerDid, now, ownerDid, now)
+      .bind(ownerEncryptedPhone, ownerDid, now, ownerDid, now)
       .run();
 
     return c.json({

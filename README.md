@@ -8,8 +8,9 @@ Built with Cloudflare Workers + D1 + R2, following OWASP API Security Top 10 202
 
 ## Status
 
-🚀 **PRODUCTION DEPLOYED** (Dec 25, 2025)
+🚀 **PRODUCTION DEPLOYED** (Dec 31, 2025)
 **Live:** https://buds-relay.getstreams.workers.dev
+**Dev:** https://buds-relay-dev.getstreams.workers.dev
 **Domain:** api.joinbuds.com (pending DNS setup)
 
 ### What's Complete
@@ -18,10 +19,29 @@ Built with Cloudflare Workers + D1 + R2, following OWASP API Security Top 10 202
 ✅ **Rate Limiting** - Per-endpoint limits (20-200 req/min), DID enumeration prevention
 ✅ **Input Validation** - Zod schemas for all inputs, SQL injection prevention
 ✅ **E2EE Message Relay** - Device registration, DID lookup, message send/receive
-✅ **Signature Verification** - Ed25519 signature storage + validation (Migration 0003)
-✅ **R2 Storage Migration** - Encrypted payloads in R2 vs D1 (Migration 0004)
+✅ **Signature Verification** - Ed25519 signature storage + validation
+✅ **R2 Storage** - Encrypted payloads in R2 vs D1 for scalability
 ✅ **Cleanup Cron** - Expired messages + R2 objects deleted daily at 2 AM UTC
+✅ **Phone-Based Identity** - DID derivation from phone + account salt (Migration 0005)
+✅ **Deterministic Phone Encryption** - AES-256-GCM prevents rainbow table attacks (Migration 0006)
 ✅ **Test Coverage** - 39/39 tests passing, zero TypeScript errors
+
+### Crypto Hardening (Phase 10.3 Modules 0.2-0.3)
+
+**Identity Model:**
+- DID = `did:phone:SHA256(phone + account_salt)` (not per-device)
+- All devices with same phone number = same DID
+- Account salt generated once per phone, stored encrypted on relay
+
+**Phone Number Security:**
+- Plaintext phones sent over HTTPS (TLS)
+- Encrypted server-side with AES-256-GCM (deterministic)
+- Nonce derived from SHA-256(phone).slice(0, 12)
+- Requires BOTH database leak AND secrets leak to expose phone numbers
+
+**DID Format Support:**
+- `did:phone:<hex64>` - Phone-based identity (current)
+- `did:buds:<base58>` - Legacy format (still supported)
 
 ### Scale Performance
 
@@ -75,31 +95,50 @@ npx wrangler r2 bucket create buds-messages-prod
 ### 3. Apply Migrations
 
 ```bash
-# Local
-npm run db:migrate
+# Development
+npx wrangler d1 execute buds-relay-db --env=dev --remote --file=migrations/0001_initial.sql
+npx wrangler d1 execute buds-relay-db --env=dev --remote --file=migrations/0002_add_apns_token.sql
+npx wrangler d1 execute buds-relay-db --env=dev --remote --file=migrations/0003_add_signature_column.sql
+npx wrangler d1 execute buds-relay-db --env=dev --remote --file=migrations/0004_add_r2_storage.sql
+npx wrangler d1 execute buds-relay-db --env=dev --remote --file=migrations/0005_add_account_salts.sql
+npx wrangler d1 execute buds-relay-db --env=dev --remote --file=migrations/0006_add_encrypted_phone.sql
 
-# Production
-npm run db:migrate:prod
+# Production (same commands with --env=production)
 ```
 
 **Migrations:**
-- `0001_initial.sql` - Initial schema
+- `0001_initial.sql` - Initial schema (devices, phone_to_did, encrypted_messages)
 - `0002_add_apns_token.sql` - APNs token for push notifications
 - `0003_add_signature_column.sql` - Ed25519 signature storage
 - `0004_add_r2_storage.sql` - R2 object storage for encrypted payloads
+- `0005_add_account_salts.sql` - Phone-based identity (account salts table)
+- `0006_add_encrypted_phone.sql` - Deterministic phone encryption (phone_hash → encrypted_phone)
 
-### 4. Run Tests
+### 4. Set Secrets
+
+```bash
+# REQUIRED: Phone encryption key (generate with: openssl rand -base64 32)
+echo "YOUR_BASE64_KEY" | npx wrangler secret put PHONE_ENCRYPTION_KEY --env=dev
+echo "YOUR_BASE64_KEY" | npx wrangler secret put PHONE_ENCRYPTION_KEY --env=production
+
+# OPTIONAL: APNs credentials (for push notifications)
+npx wrangler secret put APNS_P8_KEY --env production
+npx wrangler secret put APNS_KEY_ID --env production
+npx wrangler secret put APNS_TEAM_ID --env production
+```
+
+### 5. Run Tests
 
 ```bash
 npm test
 # Expected: ✓ 39 tests passing
 ```
 
-### 5. Deploy
+### 6. Deploy
 
 ```bash
 # Development
-npm run deploy
+npm run deploy:staging
 
 # Production
 npm run deploy:prod
@@ -111,10 +150,16 @@ npm run deploy:prod
 
 All `/api/*` endpoints require Firebase Authentication (`Authorization: Bearer <token>`).
 
+### Account Management
+
+```bash
+POST /api/account/salt          # Get or create account salt (phone-based DID)
+```
+
 ### Device Management
 
 ```bash
-POST /api/devices/register     # Register new device
+POST /api/devices/register      # Register new device (with phone number)
 POST /api/devices/list          # List devices for DIDs
 POST /api/devices/heartbeat     # Update device last_seen_at
 ```
@@ -122,7 +167,7 @@ POST /api/devices/heartbeat     # Update device last_seen_at
 ### DID Lookup
 
 ```bash
-POST /api/lookup/did            # Lookup DID by phone hash
+POST /api/lookup/did            # Lookup DID by phone number (encrypted server-side)
 POST /api/lookup/batch          # Batch lookup (max 12)
 ```
 
@@ -141,6 +186,13 @@ DELETE /api/messages/:messageId # Delete message + R2 object
 GET /health                     # No auth required
 ```
 
+### Testing Endpoints (Dev Only)
+
+```bash
+POST /test/phone-encryption     # Test deterministic phone encryption
+POST /test/account-salt-debug   # Test account salt flow (no auth)
+```
+
 ---
 
 ## Security Model
@@ -152,17 +204,34 @@ GET /health                     # No auth required
 - Relay cannot modify messages (Ed25519 signatures verified by recipients)
 - Relay cannot inject messages (device ownership verified)
 
+### Phone Number Privacy (Phase 10.3 Module 0.3)
+
+**Server-Side Deterministic Encryption:**
+- Client sends plaintext phone over HTTPS (TLS)
+- Server encrypts with AES-256-GCM using PHONE_ENCRYPTION_KEY secret
+- Nonce derived from SHA-256(phone).slice(0, 12) - deterministic for lookups
+- Same phone → same ciphertext → enables database queries
+
+**Security Properties:**
+- ❌ Rainbow tables don't work (ciphertext, not hash)
+- ✅ Lookups work (deterministic encryption)
+- ✅ DB leak alone doesn't expose phones (encrypted at rest)
+- ✅ Requires BOTH DB + secrets leak to decrypt
+
+**Tradeoff:** Server sees plaintext phones during API calls (over TLS). Encrypted phones stored in database. This is necessary for phone-based identity with multi-device support.
+
 ### Validation (Zod Schemas)
 
-- ✅ DIDs: `did:buds:<base58>` format
+- ✅ DIDs: `did:phone:<hex64>` OR `did:buds:<base58>` format
 - ✅ Device IDs: UUID v4
-- ✅ Phone hashes: SHA-256 (64 hex chars)
+- ✅ Phone numbers: E.164 format (e.g., +14155551234)
 - ✅ CIDs: CIDv1 base32 format
 - ✅ Ed25519 Signatures: Base64, 88 chars
 - ✅ Max 12 DIDs per request (Circle limit)
 
 ### Rate Limiting
 
+- `/api/account/salt`: 10 requests/minute
 - `/api/lookup/did`: 20 requests/minute (DID enumeration prevention)
 - `/api/devices/register`: 5 requests per 5 minutes (spam prevention)
 - `/api/messages/send`: 100 requests/minute
@@ -184,6 +253,14 @@ GET /health                     # No auth required
 [env.production.vars]
 ENVIRONMENT = "production"
 FIREBASE_PROJECT_ID = "buds-a32e0"
+
+[env.production.observability]
+enabled = true
+
+[env.production.observability.logs]
+enabled = true
+head_sampling_rate = 1
+invocation_logs = true
 ```
 
 ### Required Bindings
@@ -192,12 +269,19 @@ FIREBASE_PROJECT_ID = "buds-a32e0"
 - `KV_CACHE` - KV Namespace (Firebase public key cache)
 - `R2_MESSAGES` - R2 Bucket (encrypted message payloads)
 
+### Required Secrets
+
+```bash
+# Generate encryption key: openssl rand -base64 32
+PHONE_ENCRYPTION_KEY  # Base64-encoded 256-bit AES key for phone number encryption
+```
+
 ### Optional Secrets (APNs Push)
 
 ```bash
-npx wrangler secret put APNS_P8_KEY --env production
-npx wrangler secret put APNS_KEY_ID --env production
-npx wrangler secret put APNS_TEAM_ID --env production
+APNS_P8_KEY     # .p8 key content from Apple Developer Portal
+APNS_KEY_ID     # Key ID from Apple Developer Portal
+APNS_TEAM_ID    # Team ID from Apple Developer Portal
 ```
 
 ---
@@ -225,11 +309,11 @@ routes = [
 # Tail logs (real-time)
 npx wrangler tail --env production
 
-# View analytics
-npx wrangler dev
+# View analytics in Cloudflare Dashboard
+# → Workers & Pages → buds-relay → Observability
 
 # Check health
-curl https://api.joinbuds.com/health
+curl https://buds-relay.getstreams.workers.dev/health
 ```
 
 ---
@@ -241,12 +325,16 @@ buds-relay/
 ├── src/
 │   ├── index.ts              # Main router + scheduled triggers
 │   ├── middleware/           # Auth + rate limiting
-│   ├── handlers/             # API endpoints (devices, lookup, messages)
-│   ├── utils/                # Validation, errors, crypto
+│   ├── handlers/             # API endpoints (devices, lookup, messages, account)
+│   ├── utils/                # Validation, errors, crypto, phone encryption
 │   └── cron/                 # Cleanup job (expired messages + R2)
 ├── test/                     # 39 tests (validation + rate limiting)
-├── migrations/               # 4 migrations (0001-0004)
-├── wrangler.toml             # Cloudflare config
+├── migrations/               # 6 migrations (0001-0006)
+├── docs/                     # Documentation
+│   ├── deployment/           # Deployment guides (R2 migration)
+│   ├── architecture/         # Architecture docs (future)
+│   └── planning/             # Planning docs (future)
+├── wrangler.toml             # Cloudflare config (dev + prod)
 └── deploy.sh                 # Deployment script with safety checks
 ```
 
@@ -257,8 +345,8 @@ buds-relay/
 - `npm run dev` - Start local development server
 - `npm test` - Run all tests (39/39 passing)
 - `npm run typecheck` - TypeScript type checking
+- `npm run deploy:staging` - Deploy to dev environment
 - `npm run deploy:prod` - Deploy to production
-- `npm run db:migrate:prod` - Apply migrations to production
 
 ---
 
@@ -277,8 +365,16 @@ buds-relay/
 
 ---
 
+## Documentation
+
+- **Deployment:** See `docs/deployment/R2_MIGRATION_GUIDE.md`
+- **Architecture:** See `docs/architecture/` (future)
+- **Planning:** See `docs/planning/` (future)
+
+---
+
 ## License
-Eve
+
 MIT
 
 ## Author
@@ -287,4 +383,4 @@ Eric Yarmolinsky
 
 ---
 
-**Status:** Production deployed. 39/39 tests passing. Ready for 10k users.
+**Status:** Production deployed. Phase 10.3 Module 0.3 complete. 39/39 tests passing. Ready for 10k users.

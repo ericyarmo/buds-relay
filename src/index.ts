@@ -37,6 +37,9 @@ export interface Env {
   APNS_P8_KEY?: string; // .p8 key content
   APNS_KEY_ID?: string; // Key ID from Apple Developer Portal
   APNS_TEAM_ID?: string; // Team ID from Apple Developer Portal
+
+  // Phone encryption key (Phase 10.3 Module 0.3)
+  PHONE_ENCRYPTION_KEY: string; // Base64-encoded 256-bit AES key
 }
 
 // Context variables
@@ -72,6 +75,107 @@ app.get('/health', async (c) => {
       error: 'Database connection failed',
       timestamp: Date.now(),
     }, 503);
+  }
+});
+
+// Test endpoint for phone encryption (no auth required, dev only)
+// Phase 10.3 Module 0.3: Test deterministic encryption
+app.post('/test/phone-encryption', async (c) => {
+  if (c.env.ENVIRONMENT === 'production') {
+    return c.json({ error: 'Test endpoint disabled in production' }, 403);
+  }
+
+  try {
+    const { encryptPhone } = await import('./utils/phone_encryption');
+    const body = await c.req.json();
+    const phoneNumber = body.phone_number;
+
+    if (!phoneNumber) {
+      return c.json({ error: 'phone_number required' }, 400);
+    }
+
+    const encryptionKey = c.env.PHONE_ENCRYPTION_KEY;
+    if (!encryptionKey) {
+      return c.json({ error: 'PHONE_ENCRYPTION_KEY not configured' }, 500);
+    }
+
+    // Encrypt phone twice to show deterministic behavior
+    const encrypted1 = await encryptPhone(phoneNumber, encryptionKey);
+    const encrypted2 = await encryptPhone(phoneNumber, encryptionKey);
+
+    return c.json({
+      phone_number: phoneNumber,
+      encrypted_phone_1: encrypted1,
+      encrypted_phone_2: encrypted2,
+      deterministic: encrypted1 === encrypted2,
+      note: 'Same phone → same ciphertext (required for lookups)',
+    });
+  } catch (error) {
+    return c.json({
+      error: 'Encryption test failed',
+      details: error instanceof Error ? error.message : String(error),
+    }, 500);
+  }
+});
+
+// Debug endpoint to test account salt flow (no auth required, dev only)
+app.post('/test/account-salt-debug', async (c) => {
+  if (c.env.ENVIRONMENT === 'production') {
+    return c.json({ error: 'Test endpoint disabled in production' }, 403);
+  }
+
+  try {
+    const { encryptPhone } = await import('./utils/phone_encryption');
+    const body = await c.req.json();
+    const phoneNumber = body.phone_number;
+
+    if (!phoneNumber) {
+      return c.json({ error: 'phone_number required' }, 400);
+    }
+
+    const encryptionKey = c.env.PHONE_ENCRYPTION_KEY;
+    if (!encryptionKey) {
+      return c.json({ error: 'PHONE_ENCRYPTION_KEY not configured' }, 500);
+    }
+
+    console.log('[DEBUG] Phone number:', phoneNumber);
+    console.log('[DEBUG] Encryption key length:', encryptionKey?.length);
+
+    // Encrypt phone
+    const encryptedPhone = await encryptPhone(phoneNumber, encryptionKey);
+    console.log('[DEBUG] Encrypted phone:', encryptedPhone);
+
+    // Check if salt exists
+    const existing = await c.env.DB
+      .prepare('SELECT salt FROM account_salts WHERE encrypted_phone = ?')
+      .bind(encryptedPhone)
+      .first<{ salt: string }>();
+
+    console.log('[DEBUG] Salt query result:', existing);
+
+    if (existing) {
+      return c.json({
+        phone_number: phoneNumber,
+        encrypted_phone: encryptedPhone,
+        salt: existing.salt,
+        found: true,
+        message: 'Salt exists in DB',
+      });
+    } else {
+      return c.json({
+        phone_number: phoneNumber,
+        encrypted_phone: encryptedPhone,
+        found: false,
+        message: 'Salt not found in DB',
+      });
+    }
+  } catch (error) {
+    console.error('[DEBUG] Error:', error);
+    return c.json({
+      error: 'Debug test failed',
+      details: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    }, 500);
   }
 });
 

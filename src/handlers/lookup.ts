@@ -1,10 +1,12 @@
 /**
  * DID Lookup Handlers
+ * Updated in Phase 10.3 Module 0.3: Deterministic Phone Encryption
  */
 
 import type { Context } from 'hono';
 import { validate, schemas } from '../utils/validation';
 import { Errors } from '../utils/errors';
+import { encryptPhone } from '../utils/phone_encryption';
 import type { Env } from '../index';
 import type { AuthUser } from '../middleware/auth';
 
@@ -12,19 +14,34 @@ type AppContext = { Bindings: Env; Variables: { user: AuthUser } };
 
 /**
  * POST /api/lookup/did
- * Lookup DID by phone number hash
+ * Lookup DID by phone number
+ *
+ * Phase 10.3 Module 0.3: Now accepts plaintext phone_number, encrypts server-side
+ * Security: Same deterministic encryption as registration ensures lookups work
  */
 export async function lookupDid(c: Context<AppContext>) {
   const db = c.env.DB;
 
   // Validate request body
   const body = await c.req.json();
-  const phoneHash = validate(schemas.phoneHash, body.phone_hash);
+  const phoneNumber = body.phone_number; // Plaintext phone from client (over HTTPS)
 
-  // Query phone_to_did table
+  if (!phoneNumber) {
+    throw Errors.ValidationFailed('phone_number is required');
+  }
+
+  // Encrypt phone number server-side (deterministic - same phone → same ciphertext)
+  const encryptionKey = c.env.PHONE_ENCRYPTION_KEY;
+  if (!encryptionKey) {
+    throw Errors.ServerError('Phone encryption key not configured');
+  }
+
+  const encryptedPhone = await encryptPhone(phoneNumber, encryptionKey);
+
+  // Query phone_to_did table by encrypted phone
   const result = await db
-    .prepare('SELECT did, updated_at FROM phone_to_did WHERE phone_hash = ?')
-    .bind(phoneHash)
+    .prepare('SELECT did, updated_at FROM phone_to_did WHERE encrypted_phone = ?')
+    .bind(encryptedPhone)
     .first();
 
   if (!result) {
@@ -41,7 +58,9 @@ export async function lookupDid(c: Context<AppContext>) {
 
 /**
  * POST /api/lookup/batch
- * Batch lookup DIDs by phone number hashes (max 12)
+ * Batch lookup DIDs by phone numbers (max 12)
+ *
+ * Phase 10.3 Module 0.3: Now accepts plaintext phone_numbers array
  */
 export async function batchLookupDid(c: Context<AppContext>) {
   const db = c.env.DB;
@@ -49,44 +68,56 @@ export async function batchLookupDid(c: Context<AppContext>) {
   // Validate request body
   const body = await c.req.json();
 
-  // Validate phone hashes array (max 12 for Circle limit)
-  if (!Array.isArray(body.phone_hashes)) {
-    throw Errors.ValidationFailed('phone_hashes must be an array');
+  // Validate phone numbers array (max 12 for Circle limit)
+  if (!Array.isArray(body.phone_numbers)) {
+    throw Errors.ValidationFailed('phone_numbers must be an array');
   }
-  if (body.phone_hashes.length === 0) {
-    throw Errors.ValidationFailed('phone_hashes cannot be empty');
+  if (body.phone_numbers.length === 0) {
+    throw Errors.ValidationFailed('phone_numbers cannot be empty');
   }
-  if (body.phone_hashes.length > 12) {
-    throw Errors.ValidationFailed('Maximum 12 phone hashes allowed');
+  if (body.phone_numbers.length > 12) {
+    throw Errors.ValidationFailed('Maximum 12 phone numbers allowed');
   }
 
-  // Validate each phone hash
-  const phoneHashes = body.phone_hashes.map((hash: unknown) =>
-    validate(schemas.phoneHash, hash)
+  // Encrypt phone number server-side (deterministic)
+  const encryptionKey = c.env.PHONE_ENCRYPTION_KEY;
+  if (!encryptionKey) {
+    throw Errors.ServerError('Phone encryption key not configured');
+  }
+
+  // Encrypt all phone numbers
+  const phoneNumbers = body.phone_numbers as string[];
+  const encryptedPhones = await Promise.all(
+    phoneNumbers.map((phone) => encryptPhone(phone, encryptionKey))
   );
 
   // Build query with placeholders
-  const placeholders = phoneHashes.map(() => '?').join(',');
+  const placeholders = encryptedPhones.map(() => '?').join(',');
   const query = `
-    SELECT phone_hash, did, updated_at
+    SELECT encrypted_phone, did, updated_at
     FROM phone_to_did
-    WHERE phone_hash IN (${placeholders})
+    WHERE encrypted_phone IN (${placeholders})
   `;
 
-  const result = await db.prepare(query).bind(...phoneHashes).all();
+  const result = await db.prepare(query).bind(...encryptedPhones).all();
 
-  // Build result map
+  // Build result map (map back to original phone numbers)
   const dids: Record<string, { did: string; updated_at: number }> = {};
   for (const row of result.results || []) {
-    dids[row.phone_hash as string] = {
-      did: row.did as string,
-      updated_at: row.updated_at as number,
-    };
+    const encryptedPhone = row.encrypted_phone as string;
+    const index = encryptedPhones.indexOf(encryptedPhone);
+    if (index >= 0) {
+      const originalPhone = phoneNumbers[index];
+      dids[originalPhone] = {
+        did: row.did as string,
+        updated_at: row.updated_at as number,
+      };
+    }
   }
 
   return c.json({
     dids,
     found: Object.keys(dids).length,
-    requested: phoneHashes.length,
+    requested: phoneNumbers.length,
   });
 }

@@ -6,6 +6,15 @@ compatibility_date = "2024-01-01"
 [env.dev]
 name = "buds-relay-dev"
 
+# Observability - Enable logs for debugging
+[env.dev.observability]
+enabled = true
+
+[env.dev.observability.logs]
+enabled = true
+head_sampling_rate = 1
+invocation_logs = true
+
 # KV namespace for Firebase public key caching
 [[env.dev.kv_namespaces]]
 binding = "KV_CACHE"
@@ -30,6 +39,15 @@ FIREBASE_PROJECT_ID = "buds-a32e0"
 # Production environment
 [env.production]
 name = "buds-relay"
+
+# Observability - Enable logs for production monitoring
+[env.production.observability]
+enabled = true
+
+[env.production.observability.logs]
+enabled = true
+head_sampling_rate = 1
+invocation_logs = true
 
 # KV namespace for Firebase public key caching (production)
 [[env.production.kv_namespaces]]

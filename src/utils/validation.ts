@@ -9,10 +9,11 @@ import { z } from 'zod';
 
 // Zod schemas for all API inputs
 export const schemas = {
-  // DID format: did:buds:<base58>
+  // DID format: did:buds:<base58> OR did:phone:<hex64>
+  // Phase 10.3 Module 0.2: Added did:phone: support for phone-based identity
   did: z.string().regex(
-    /^did:buds:[A-Za-z0-9]{1,44}$/,
-    'Invalid DID format (expected: did:buds:<base58>)'
+    /^did:(buds:[A-Za-z0-9]{1,44}|phone:[a-f0-9]{64})$/,
+    'Invalid DID format (expected: did:buds:<base58> or did:phone:<hex64>)'
   ),
 
   // UUID v4 format
@@ -58,7 +59,7 @@ export const schemas = {
 
   // Array of DIDs (1-12 max for Circle limit)
   dids: z.array(
-    z.string().regex(/^did:buds:[A-Za-z0-9]{1,44}$/)
+    z.string().regex(/^did:(buds:[A-Za-z0-9]{1,44}|phone:[a-f0-9]{64})$/)
   ).min(1, 'At least one DID required')
     .max(12, 'Maximum 12 DIDs allowed (Circle limit)'),
 
