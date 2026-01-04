@@ -8,7 +8,7 @@ Built with Cloudflare Workers + D1 + R2, following OWASP API Security Top 10 202
 
 ## Status
 
-🚀 **PRODUCTION DEPLOYED** (Dec 31, 2025)
+🚀 **PRODUCTION DEPLOYED** (Jan 3, 2026)
 **Live:** https://buds-relay.getstreams.workers.dev
 **Dev:** https://buds-relay-dev.getstreams.workers.dev
 **Domain:** api.joinbuds.com (pending DNS setup)
@@ -24,6 +24,7 @@ Built with Cloudflare Workers + D1 + R2, following OWASP API Security Top 10 202
 ✅ **Cleanup Cron** - Expired messages + R2 objects deleted daily at 2 AM UTC
 ✅ **Phone-Based Identity** - DID derivation from phone + account salt (Migration 0005)
 ✅ **Deterministic Phone Encryption** - AES-256-GCM prevents rainbow table attacks (Migration 0006)
+✅ **Jar Receipt Infrastructure** - Relay envelope architecture, authoritative sequence assignment (Migration 0007)
 ✅ **Test Coverage** - 39/39 tests passing, zero TypeScript errors
 
 ### Crypto Hardening (Phase 10.3 Modules 0.2-0.3)
@@ -42,6 +43,30 @@ Built with Cloudflare Workers + D1 + R2, following OWASP API Security Top 10 202
 **DID Format Support:**
 - `did:phone:<hex64>` - Phone-based identity (current)
 - `did:buds:<base58>` - Legacy format (still supported)
+
+### Jar Receipt Infrastructure (Phase 10.3 Module 0.6)
+
+**Relay Envelope Architecture:**
+- Client sends receipt WITHOUT sequence → relay assigns authoritative sequence
+- Sequence NOT in signed bytes (avoids re-signing paradox)
+- Race-safe sequence assignment (retry + UNIQUE constraint)
+- Conflict-free ordering (all clients apply in relay sequence order)
+
+**4-Layer Security:**
+1. CID integrity check (verifyCID)
+2. Ed25519 signature verification
+3. Firebase authentication
+4. Membership validation (isActiveMember)
+
+**Receipt Processing:**
+- Relay stores envelope: {sequence, receipt_cid, receipt_data, signature, received_at}
+- Relay updates jar_members table from receipts (materialized view)
+- Membership is receipts (single source of truth)
+
+**CIDv1 Compatibility:**
+- Relay matches iOS CIDv1 implementation exactly
+- Format: "b" + base32(0x01 + 0x71 + 0x12 + 0x20 + sha256(bytes))
+- RFC 4648 base32 encoding (lowercase)
 
 ### Scale Performance
 
@@ -102,6 +127,7 @@ npx wrangler d1 execute buds-relay-db --env=dev --remote --file=migrations/0003_
 npx wrangler d1 execute buds-relay-db --env=dev --remote --file=migrations/0004_add_r2_storage.sql
 npx wrangler d1 execute buds-relay-db --env=dev --remote --file=migrations/0005_add_account_salts.sql
 npx wrangler d1 execute buds-relay-db --env=dev --remote --file=migrations/0006_add_encrypted_phone.sql
+npx wrangler d1 execute buds-relay-db --env=dev --remote --file=migrations/0007_add_jar_receipts.sql
 
 # Production (same commands with --env=production)
 ```
@@ -113,6 +139,7 @@ npx wrangler d1 execute buds-relay-db --env=dev --remote --file=migrations/0006_
 - `0004_add_r2_storage.sql` - R2 object storage for encrypted payloads
 - `0005_add_account_salts.sql` - Phone-based identity (account salts table)
 - `0006_add_encrypted_phone.sql` - Deterministic phone encryption (phone_hash → encrypted_phone)
+- `0007_add_jar_receipts.sql` - Jar receipt tables (jar_receipts, jar_members) + relay envelope architecture
 
 ### 4. Set Secrets
 
@@ -176,8 +203,15 @@ POST /api/lookup/batch          # Batch lookup (max 12)
 ```bash
 POST /api/messages/send         # Send encrypted message (uploads to R2)
 GET  /api/messages/inbox        # Get inbox (reads from R2)
-POST /api/messages/mark-delivered
-DELETE /api/messages/:messageId # Delete message + R2 object
+POST /api/messages/mark-delivered  # Mark messages as delivered
+```
+
+### Jar Receipts (Phase 10.3 Module 0.6)
+
+```bash
+POST /api/jars/:jarId/receipts             # Store jar receipt, assign authoritative sequence
+GET  /api/jars/:jarId/receipts?after=N     # Normal sync (everything after lastSeq)
+GET  /api/jars/:jarId/receipts?from=N&to=M # Gap filling (specific range)
 ```
 
 ### Health Check
