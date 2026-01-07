@@ -16,6 +16,8 @@ import type { AuthUser } from '../middleware/auth';
 import { isActiveMember, getActiveMembers } from '../utils/jarValidation';
 import { computeCID, verifyCID } from '../utils/cid';
 import { processJarReceipt } from '../utils/receiptProcessor';
+import { extractSenderDid } from '../utils/cbor';
+import { encryptPhone } from '../utils/phone_encryption';
 
 /**
  * Get sender's Ed25519 public key from devices table
@@ -89,8 +91,10 @@ async function tryInsertReceipt(
   parentCid: string | null
 ): Promise<number | null> {
   try {
+    console.log(`🔍 [DEBUG] tryInsertReceipt: jar=${jarId}, cid=${receiptCid}, parent=${parentCid}`);
+
     // Attempt to insert with MAX(seq)+1
-    await db
+    const result = await db
       .prepare(
         `INSERT INTO jar_receipts (
           jar_id,
@@ -125,14 +129,20 @@ async function tryInsertReceipt(
       )
       .run();
 
+    console.log(`🔍 [DEBUG] Insert result: success=${result.success}, meta=${JSON.stringify(result.meta)}`);
+
     // Success! Get the assigned sequence number
     const inserted = await db
       .prepare('SELECT sequence_number FROM jar_receipts WHERE receipt_cid = ?')
       .bind(receiptCid)
       .first<{ sequence_number: number }>();
 
+    console.log(`🔍 [DEBUG] Fetched inserted receipt: ${JSON.stringify(inserted)}`);
+
     return inserted?.sequence_number || null;
   } catch (error: any) {
+    console.error(`❌ [DEBUG] tryInsertReceipt error: ${error.message}`, error);
+
     // Check if it's a UNIQUE constraint violation (race condition)
     if (error.message?.includes('UNIQUE') || error.message?.includes('constraint')) {
       console.warn(`⚠️  Sequence collision for jar ${jarId}, will retry`);
@@ -140,6 +150,7 @@ async function tryInsertReceipt(
     }
 
     // Other error - rethrow
+    console.error(`❌ [DEBUG] Rethrowing error:`, error);
     throw error;
   }
 }
@@ -177,7 +188,7 @@ export async function storeJarReceipt(c: Context<{ Bindings: Env; Variables: { u
   try {
     const jarId = c.req.param('jarId');
     const user = c.get('user');
-    const senderDid = user.uid;
+    const firebaseUID = user.uid; // For logging/spam prevention only
 
     // Parse request body
     const body = await c.req.json<{
@@ -199,6 +210,17 @@ export async function storeJarReceipt(c: Context<{ Bindings: Env; Variables: { u
     // Decode base64 to bytes
     const receiptBytes = Uint8Array.from(atob(receipt_data), ch => ch.charCodeAt(0));
     const signatureBytes = Uint8Array.from(atob(signature), ch => ch.charCodeAt(0));
+
+    // CRITICAL FIX: Extract sender_did from receipt CBOR (not Firebase UID)
+    // This is the cryptographic identity that signed the receipt
+    let senderDid: string;
+    try {
+      senderDid = extractSenderDid(receiptBytes);
+      console.log(`🔐 Receipt from DID: ${senderDid} (Firebase UID: ${firebaseUID})`);
+    } catch (error) {
+      console.error(`❌ Failed to extract sender_did from receipt:`, error);
+      return c.json({ error: error instanceof Error ? error.message : 'Invalid receipt format' }, 400);
+    }
 
     // SECURITY CHECK #1: Compute and verify CID (integrity)
     const receiptCid = await computeCID(receiptBytes);
@@ -243,6 +265,8 @@ export async function storeJarReceipt(c: Context<{ Bindings: Env; Variables: { u
 
     // SECURITY CHECK #4: Validate sender is active member (authorization)
     const isMember = await isActiveMember(c.env.DB, jarId, senderDid);
+    console.log(`🔍 [DEBUG] Membership check: isMember=${isMember}, jarId=${jarId}, senderDid=${senderDid}`);
+
     if (!isMember) {
       // Special case: jar.created receipt (first receipt, no members yet)
       const maxSeq = await c.env.DB
@@ -250,13 +274,18 @@ export async function storeJarReceipt(c: Context<{ Bindings: Env; Variables: { u
         .bind(jarId)
         .first<{ max_seq: number }>();
 
+      console.log(`🔍 [DEBUG] Not a member - checking if first receipt. maxSeq=${JSON.stringify(maxSeq)}`);
+
       if (maxSeq && maxSeq.max_seq > 0) {
         // Not the first receipt, and sender is not a member → reject
+        console.error(`❌ Sender ${senderDid} not a member of jar ${jarId} (has ${maxSeq.max_seq} receipts)`);
         return c.json({ error: 'Not a member of this jar' }, 403);
       }
 
       // First receipt (jar.created) → allow
-      console.log(`✅ Allowing jar.created receipt from ${senderDid} (first receipt)`);
+      console.log(`✅ Allowing first receipt from ${senderDid} (jar has ${maxSeq?.max_seq || 0} receipts)`);
+    } else {
+      console.log(`✅ Sender ${senderDid} is active member of jar ${jarId}`);
     }
 
     // Optional: Validate parent_cid exists (if provided)
@@ -272,10 +301,12 @@ export async function storeJarReceipt(c: Context<{ Bindings: Env; Variables: { u
     }
 
     // RACE-SAFE SEQUENCE ASSIGNMENT: Retry up to 5 times on collision
+    console.log(`🔍 [DEBUG] Starting receipt insertion for jar ${jarId}, CID ${receiptCid}`);
     let authoritativeSequence: number | null = null;
     const maxRetries = 5;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
+      console.log(`🔍 [DEBUG] Insert attempt ${attempt + 1}/${maxRetries}`);
       authoritativeSequence = await tryInsertReceipt(
         c.env.DB,
         jarId,
@@ -288,6 +319,7 @@ export async function storeJarReceipt(c: Context<{ Bindings: Env; Variables: { u
 
       if (authoritativeSequence !== null) {
         // Success!
+        console.log(`🔍 [DEBUG] Insert succeeded with sequence ${authoritativeSequence}`);
         break;
       }
 
@@ -297,6 +329,7 @@ export async function storeJarReceipt(c: Context<{ Bindings: Env; Variables: { u
     }
 
     if (authoritativeSequence === null) {
+      console.error(`❌ Failed to assign sequence after ${maxRetries} retries (race condition)`);
       throw new Error(`Failed to assign sequence after ${maxRetries} retries (race condition)`);
     }
 
@@ -359,7 +392,37 @@ export async function getJarReceipts(c: Context<{ Bindings: Env; Variables: { us
   try {
     const jarId = c.req.param('jarId');
     const user = c.get('user');
-    const requesterDid = user.uid;
+    const firebaseUID = user.uid;
+
+    // CRITICAL FIX: Look up requester's DID from their phone number
+    // Firebase auth gives us phone number, but jar_members uses DIDs
+    if (!user.phoneNumber) {
+      console.error(`❌ No phone number in Firebase token for ${firebaseUID}`);
+      return c.json({ error: 'Phone number required for jar access' }, 400);
+    }
+
+    // Encrypt phone number to look up DID
+    const encryptionKey = c.env.PHONE_ENCRYPTION_KEY;
+    if (!encryptionKey) {
+      console.error(`❌ Phone encryption key not configured`);
+      return c.json({ error: 'Server configuration error' }, 500);
+    }
+
+    const encryptedPhone = await encryptPhone(user.phoneNumber, encryptionKey);
+
+    // Look up DID from phone_to_did table
+    const phoneMapping = await c.env.DB
+      .prepare('SELECT did FROM phone_to_did WHERE encrypted_phone = ?')
+      .bind(encryptedPhone)
+      .first<{ did: string }>();
+
+    if (!phoneMapping) {
+      console.error(`❌ No DID found for phone (Firebase UID: ${firebaseUID})`);
+      return c.json({ error: 'Device not registered' }, 403);
+    }
+
+    const requesterDid = phoneMapping.did;
+    console.log(`🔍 Fetching receipts for DID: ${requesterDid} (Firebase UID: ${firebaseUID})`);
 
     // Parse query params
     const after = c.req.query('after'); // For normal sync
@@ -453,6 +516,74 @@ export async function getJarReceipts(c: Context<{ Bindings: Env; Variables: { us
     return c.json(
       {
         error: 'Failed to get jar receipts',
+        details: error instanceof Error ? error.message : String(error),
+      },
+      500
+    );
+  }
+}
+
+/**
+ * GET /api/jars/list
+ *
+ * List all jars where the authenticated user is an active member.
+ * This enables jar discovery - users can find jars they've been added to.
+ *
+ * Security: Uses DID from Firebase phone → DID lookup (not Firebase UID)
+ *
+ * Returns: { jars: [{ jar_id: string, role: string }] }
+ */
+export async function listUserJars(c: Context<{ Bindings: Env; Variables: { user: AuthUser } }>) {
+  try {
+    const user = c.get('user');
+    const firebaseUID = user.uid;
+
+    // CRITICAL: Look up requester's DID from their phone number
+    if (!user.phoneNumber) {
+      console.error(`❌ No phone number in Firebase token for ${firebaseUID}`);
+      return c.json({ error: 'Phone number required for jar access' }, 400);
+    }
+
+    const encryptionKey = c.env.PHONE_ENCRYPTION_KEY;
+    const encryptedPhone = await encryptPhone(user.phoneNumber, encryptionKey);
+
+    const phoneMapping = await c.env.DB
+      .prepare('SELECT did FROM phone_to_did WHERE encrypted_phone = ?')
+      .bind(encryptedPhone)
+      .first<{ did: string }>();
+
+    if (!phoneMapping) {
+      console.error(`❌ No DID found for phone (Firebase UID: ${firebaseUID})`);
+      return c.json({ error: 'Device not registered' }, 403);
+    }
+
+    const requesterDid = phoneMapping.did;
+    console.log(`🔍 Listing jars for DID: ${requesterDid} (Firebase UID: ${firebaseUID})`);
+
+    // Query jar_members table for all active memberships
+    const result = await c.env.DB
+      .prepare(
+        `SELECT jar_id, role
+         FROM jar_members
+         WHERE member_did = ? AND status = 'active'
+         ORDER BY jar_id`
+      )
+      .bind(requesterDid)
+      .all<{ jar_id: string; role: string }>();
+
+    const jars = (result.results || []).map(r => ({
+      jar_id: r.jar_id,
+      role: r.role,
+    }));
+
+    console.log(`✅ Found ${jars.length} active jars for ${requesterDid}`);
+
+    return c.json({ jars });
+  } catch (error) {
+    console.error('❌ Failed to list user jars:', error);
+    return c.json(
+      {
+        error: 'Failed to list jars',
         details: error instanceof Error ? error.message : String(error),
       },
       500

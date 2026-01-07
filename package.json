@@ -27,6 +27,7 @@
   "author": "Eric Yarmolinsky",
   "license": "MIT",
   "dependencies": {
+    "cbor-x": "^1.6.0",
     "firebase-auth-cloudflare-workers": "^2.0.6",
     "hono": "^4.11.1",
     "jose": "^6.1.3",

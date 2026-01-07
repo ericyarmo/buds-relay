@@ -16,7 +16,7 @@ import { registerDevice, listDevices, deviceHeartbeat } from './handlers/devices
 import { lookupDid, batchLookupDid } from './handlers/lookup';
 import { sendMessage, getInbox, markDelivered, deleteMessage } from './handlers/messages';
 import { getOrCreateAccountSalt } from './handlers/account';
-import { storeJarReceipt, getJarReceipts } from './handlers/jarReceipts';
+import { storeJarReceipt, getJarReceipts, listUserJars } from './handlers/jarReceipts';
 import type { AuthUser } from './middleware/auth';
 
 // Type definitions for bindings
@@ -203,6 +203,7 @@ app.post('/api/messages/mark-delivered', markDelivered);
 app.delete('/api/messages/:messageId', deleteMessage);
 
 // Jar receipt endpoints (Phase 10.3 Module 0.6)
+app.get('/api/jars/list', listUserJars);  // Jar discovery
 app.post('/api/jars/:jarId/receipts', storeJarReceipt);
 app.get('/api/jars/:jarId/receipts', getJarReceipts);
 
